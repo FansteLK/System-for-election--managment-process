@@ -1,0 +1,43 @@
+version: '3'
+
+services:
+
+  authDB:
+    image: mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+    
+    volumes:
+      - dbdata:/var/lib/mysql
+    networks:
+      - mynet
+  adminer:
+    image: adminer
+    ports:
+      - 8081:8081
+    networks:
+      - mynet
+  authenticationDBMigration:
+    image: authenticationdbmigration
+    environment:
+         - DATABASE_URL=authDB
+    networks:
+       - mynet
+  authentication:
+    image: authentication
+    environment:
+       - DATABASE_URL=authDB
+    ports:
+       - 5002:5002
+    networks:
+       - mynet
+volumes:
+  dbdata:
+
+networks:
+  mynet:
+    driver: overlay
+
+
+
+

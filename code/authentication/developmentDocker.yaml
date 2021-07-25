@@ -1,0 +1,51 @@
+version: '3'
+
+services:
+
+  authDB:
+    image: mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping" ,"-h","localhost" ]
+      timeout: 10s
+      retries: 10
+    volumes:
+      - dbdata:/var/lib/mysql
+    networks:
+      - mynet
+  adminer:
+    image: adminer
+    ports:
+      - 8081:8080
+    networks:
+      - mynet
+
+  authenticationDBMigration:
+    image: authenticationdbmigration
+    environment:
+         - DATABASE_URL=authDB
+    depends_on:
+        authDB:
+         condition: service_healthy
+    networks:
+       - mynet
+  authentication:
+    image: authentication
+    environment:
+       - DATABASE_URL=authDB
+    depends_on:
+       - authenticationDBMigration
+    ports:
+       - 5002:5002
+    networks:
+       - mynet
+volumes:
+  dbdata:
+
+networks:
+  mynet:
+
+
+
+
