@@ -1,0 +1,51 @@
+version: '3'
+
+services:
+
+  electionDB:
+    image: mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - TZ= Europe/Belgrade
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping" ,"-h","localhost" ]
+      timeout: 10s
+      retries: 10
+    volumes:
+      - dbdata:/var/lib/mysql
+
+    networks:
+      - mynet
+
+  electionDBMigration:
+    image: electiondbmigration
+    environment:
+         - DATABASE_URL=electionDB
+         - TZ= Europe/Belgrade
+    depends_on:
+        electionDB:
+         condition: service_healthy
+    networks:
+       - mynet
+  admin:
+    image: admin
+    environment:
+       - TZ= Europe/Belgrade
+       - DATABASE_URL=electionDB
+
+    depends_on:
+       - electionDBMigration
+    ports:
+       - 5001:5001
+    networks:
+       - mynet
+volumes:
+     dbdata:
+
+networks:
+  mynet:
+
+
+
+
+
