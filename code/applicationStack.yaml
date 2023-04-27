@@ -1,0 +1,76 @@
+version: '3'
+
+services:
+  applicationDB:
+    image: mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+    volumes:
+      - dbdataapp:/var/lib/mysql
+
+    networks:
+      - adminNet
+      - electionNet
+  adminer:
+    image: adminer
+    ports:
+      - 8080:8080
+    networks:
+      - adminNet
+  admin:
+    image: admin
+    environment:
+      - TZ= Europe/Belgrade
+      - DATABASE_URL=applicationDB
+
+    ports:
+      - 5001:5001
+    networks:
+      - adminNet
+  applicationDBMigration:
+    image: electiondbmigration
+    environment:
+      - DATABASE_URL=applicationDB
+    networks:
+      - adminNet
+
+  votingstation:
+    image: votingstation
+    ports:
+      - 5003:5003
+    networks:
+      - votingNet
+    deploy:
+      replicas:
+        3
+  redis:
+    image: redis
+    ports:
+      - 6379:6379
+    networks:
+      - redisNet
+      - votingNet
+  dameon:
+    image: dameon
+    environment:
+      - DATABASE_URL=applicationDB
+      - TZ= Europe/Belgrade
+    networks:
+      - electionNet
+      - redisNet
+volumes:
+     dbdataapp:
+
+networks:
+  electionNet:
+    driver:
+      overlay
+  redisNet:
+    driver:
+      overlay
+  votingNet:
+    driver:
+      overlay
+  adminNet:
+    driver:
+      overlay
