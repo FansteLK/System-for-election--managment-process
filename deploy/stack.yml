@@ -1,0 +1,81 @@
+# Docker Swarm deployment:
+#   docker build -t election-system:latest .
+#   docker swarm init
+#   docker stack deploy -c deploy/stack.yml election
+# The voting station runs 3 replicas behind Swarm's routing mesh.
+x-app: &app
+  image: election-system:latest
+  environment: &env
+    JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY}
+    AUTH_DATABASE_URI: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}@auth-db/authentication
+    ELECTION_DATABASE_URI: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@election-db/election
+    ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@admin.com}
+    ADMIN_PASSWORD: ${ADMIN_PASSWORD:-1}
+    ELECTION_TIMEZONE: ${ELECTION_TIMEZONE:-Europe/Belgrade}
+    REDIS_HOST: redis
+
+x-once: &once
+  deploy:
+    restart_policy: { condition: on-failure }
+
+services:
+  auth-db:
+    image: mysql:8.4
+    environment: { MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}", MYSQL_DATABASE: authentication }
+    volumes: [auth-data:/var/lib/mysql]
+    networks: [auth-net]
+
+  election-db:
+    image: mysql:8.4
+    environment: { MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}", MYSQL_DATABASE: election }
+    volumes: [election-data:/var/lib/mysql]
+    networks: [election-net]
+
+  redis:
+    image: redis:7-alpine
+    networks: [redis-net]
+
+  # Init jobs retry until their database accepts connections, then exit.
+  auth-init:
+    <<: [*app, *once]
+    command: ["python", "-m", "election.init_db", "authentication"]
+    networks: [auth-net]
+
+  election-init:
+    <<: [*app, *once]
+    command: ["python", "-m", "election.init_db", "election"]
+    networks: [election-net]
+
+  authentication:
+    <<: *app
+    command: ["gunicorn", "-b", "0.0.0.0:5000", "-w", "2", "election.authentication.app:create_app()"]
+    ports: ["5002:5000"]
+    networks: [auth-net]
+
+  admin:
+    <<: *app
+    command: ["gunicorn", "-b", "0.0.0.0:5000", "-w", "2", "election.admin.app:create_app()"]
+    ports: ["5001:5000"]
+    networks: [election-net]
+
+  voting-station:
+    <<: *app
+    command: ["gunicorn", "-b", "0.0.0.0:5000", "-w", "2", "election.voting_station.app:create_app()"]
+    ports: ["5003:5000"]
+    networks: [redis-net]
+    deploy:
+      replicas: 3
+
+  daemon:
+    <<: *app
+    command: ["python", "-m", "election.daemon.worker"]
+    networks: [election-net, redis-net]
+
+volumes:
+  auth-data:
+  election-data:
+
+networks:
+  auth-net: { driver: overlay }
+  election-net: { driver: overlay }
+  redis-net: { driver: overlay }

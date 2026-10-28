@@ -1,0 +1,100 @@
+# Local deployment. Networks mirror the isolation rules from the spec:
+#  - nothing outside auth-net can reach the authentication service's database
+#  - the voting station can reach only Redis
+#  - the admin service can reach only the election database
+#  - databases publish no ports
+x-app: &app
+  build: .
+  image: election-system:latest
+  restart: unless-stopped
+  environment: &env
+    JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-secret-change-me-in-production}
+    AUTH_DATABASE_URI: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD:-root}@auth-db/authentication
+    ELECTION_DATABASE_URI: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD:-root}@election-db/election
+    ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@admin.com}
+    ADMIN_PASSWORD: ${ADMIN_PASSWORD:-1}
+    ELECTION_TIMEZONE: ${ELECTION_TIMEZONE:-Europe/Belgrade}
+    REDIS_HOST: redis
+
+x-db: &db
+  image: mysql:8.4
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+    interval: 5s
+    timeout: 5s
+    retries: 30
+
+services:
+  auth-db:
+    <<: *db
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: authentication
+    volumes: [auth-data:/var/lib/mysql]
+    networks: [auth-net]
+
+  election-db:
+    <<: *db
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: election
+    volumes: [election-data:/var/lib/mysql]
+    networks: [election-net]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [redis-net]
+
+  auth-init:
+    <<: *app
+    restart: "no"
+    command: ["python", "-m", "election.init_db", "authentication"]
+    depends_on: { auth-db: { condition: service_healthy } }
+    networks: [auth-net]
+
+  election-init:
+    <<: *app
+    restart: "no"
+    command: ["python", "-m", "election.init_db", "election"]
+    depends_on: { election-db: { condition: service_healthy } }
+    networks: [election-net]
+
+  authentication:
+    <<: *app
+    command: ["gunicorn", "-b", "0.0.0.0:5000", "-w", "2", "election.authentication.app:create_app()"]
+    depends_on: { auth-init: { condition: service_completed_successfully } }
+    ports: ["5002:5000"]
+    networks: [auth-net]
+
+  admin:
+    <<: *app
+    command: ["gunicorn", "-b", "0.0.0.0:5000", "-w", "2", "election.admin.app:create_app()"]
+    depends_on: { election-init: { condition: service_completed_successfully } }
+    ports: ["5001:5000"]
+    networks: [election-net]
+
+  voting-station:
+    <<: *app
+    command: ["gunicorn", "-b", "0.0.0.0:5000", "-w", "2", "election.voting_station.app:create_app()"]
+    depends_on: [redis]
+    ports: ["5003:5000"]
+    networks: [redis-net]
+
+  daemon:
+    <<: *app
+    command: ["python", "-m", "election.daemon.worker"]
+    depends_on:
+      election-init: { condition: service_completed_successfully }
+      redis: { condition: service_started }
+    networks: [election-net, redis-net]
+
+volumes:
+  auth-data:
+  election-data:
+
+networks:
+  auth-net:
+  election-net:
+  redis-net:
